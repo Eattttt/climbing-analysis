@@ -8,6 +8,7 @@ export default function HomePage() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -30,7 +31,7 @@ export default function HomePage() {
     setUploading(true);
     setError(null);
     try {
-      const res = await uploadVideo(file);
+      const res = await uploadVideo(file, (p) => setProgress(p));
       router.push(`/analysis/${res.video_id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "上传失败");
@@ -109,13 +110,27 @@ export default function HomePage() {
           <p className="text-red-500 text-center mt-4">{error}</p>
         )}
 
-        {file && (
+        {file && uploading && (
+          <div className="mt-6">
+            <div className="flex justify-between text-sm text-gray-600 mb-1">
+              <span>上传中...</span>
+              <span>{progress}%</span>
+            </div>
+            <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-green-600 rounded-full transition-all duration-200"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {file && !uploading && (
           <button
             onClick={handleUpload}
-            disabled={uploading}
-            className="mt-6 w-full py-4 bg-green-600 text-white text-lg font-medium rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="mt-6 w-full py-4 bg-green-600 text-white text-lg font-medium rounded-xl hover:bg-green-700 transition-colors"
           >
-            {uploading ? "上传中..." : "开始分析"}
+            开始分析
           </button>
         )}
 

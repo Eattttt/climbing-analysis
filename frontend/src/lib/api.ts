@@ -6,15 +6,38 @@ import type {
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
-export async function uploadVideo(file: File): Promise<VideoUploadResponse> {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch(`${BASE}/api/videos/upload`, { method: "POST", body: form });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: "上传失败" }));
-    throw new Error(err.detail || "上传失败");
-  }
-  return res.json();
+export function uploadVideo(
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<VideoUploadResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const form = new FormData();
+    form.append("file", file);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        try {
+          const err = JSON.parse(xhr.responseText);
+          reject(new Error(err.detail || "上传失败"));
+        } catch {
+          reject(new Error("上传失败"));
+        }
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("网络错误"));
+    xhr.open("POST", `${BASE}/api/videos/upload`);
+    xhr.send(form);
+  });
 }
 
 export async function getVideoStatus(videoId: string): Promise<VideoStatusResponse> {
