@@ -4,7 +4,7 @@ import type {
   VideoResultsResponse,
 } from "./types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+const BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 export async function uploadVideo(file: File): Promise<VideoUploadResponse> {
   const form = new FormData();
