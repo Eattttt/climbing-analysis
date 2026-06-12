@@ -55,12 +55,48 @@ class RuleBasedClassifier(MovementClassifier):
                     if curr_ankle_y - prev_ankle_y > 0.06:
                         detected_type = MovementType.CUT_LOOSE
 
+            # --- Drop knee: knee bent + rotated inward + hip rotation ---
+            if detected_type == MovementType.STATIC:
+                hip_center_x = (l_hip["x"] + r_hip["x"]) / 2
+
+                # Left drop knee: left knee bent, rotated inward, right leg straighter
+                l_knee_inward = abs(l_knee["x"] - hip_center_x) < abs(l_ankle["x"] - hip_center_x)
+                l_drop = (
+                    l_knee_angle < 100
+                    and l_knee_angle < r_knee_angle - 20
+                    and l_knee_inward
+                    and l_knee["y"] > l_hip["y"] - 0.05
+                )
+
+                # Right drop knee
+                r_knee_inward = abs(r_knee["x"] - hip_center_x) < abs(r_ankle["x"] - hip_center_x)
+                r_drop = (
+                    r_knee_angle < 100
+                    and r_knee_angle < l_knee_angle - 20
+                    and r_knee_inward
+                    and r_knee["y"] > r_hip["y"] - 0.05
+                )
+
+                if l_drop or r_drop:
+                    # Confirm hip rotation (drop knee always rotates hips)
+                    shoulder_vec = (r_shoulder["x"] - l_shoulder["x"], r_shoulder["y"] - l_shoulder["y"])
+                    hip_vec = (r_hip["x"] - l_hip["x"], r_hip["y"] - l_hip["y"])
+                    dot = shoulder_vec[0] * hip_vec[0] + shoulder_vec[1] * hip_vec[1]
+                    mag_s = math.sqrt(shoulder_vec[0] ** 2 + shoulder_vec[1] ** 2)
+                    mag_h = math.sqrt(hip_vec[0] ** 2 + hip_vec[1] ** 2)
+                    if mag_s > 0 and mag_h > 0:
+                        cos_a = max(-1, min(1, dot / (mag_s * mag_h)))
+                        hip_rotation = math.degrees(math.acos(cos_a))
+                    else:
+                        hip_rotation = 0
+                    if hip_rotation > 8:
+                        detected_type = MovementType.DROP_KNEE
+
             # --- Side body: hip rotation + contralateral hand-foot ---
             if detected_type == MovementType.STATIC:
                 l_wrist = _kp_dict(kps[15])
                 r_wrist = _kp_dict(kps[16])
 
-                # Calculate angle between shoulder line and hip line
                 shoulder_vec = (r_shoulder["x"] - l_shoulder["x"], r_shoulder["y"] - l_shoulder["y"])
                 hip_vec = (r_hip["x"] - l_hip["x"], r_hip["y"] - l_hip["y"])
                 dot = shoulder_vec[0] * hip_vec[0] + shoulder_vec[1] * hip_vec[1]
@@ -72,14 +108,13 @@ class RuleBasedClassifier(MovementClassifier):
                 else:
                     hip_rotation = 0
 
-                # Contralateral check: one hand high + opposite foot low/supporting
                 l_hand_high = l_wrist["y"] < l_shoulder["y"]
                 r_hand_high = r_wrist["y"] < r_shoulder["y"]
                 l_foot_low = l_ankle["y"] > l_hip["y"]
                 r_foot_low = r_ankle["y"] > r_hip["y"]
 
-                contra_lr = l_hand_high and r_foot_low  # left hand high + right foot down
-                contra_rl = r_hand_high and l_foot_low  # right hand high + left foot down
+                contra_lr = l_hand_high and r_foot_low
+                contra_rl = r_hand_high and l_foot_low
 
                 if hip_rotation > 15 and (contra_lr or contra_rl):
                     detected_type = MovementType.SIDE_BODY
@@ -99,21 +134,6 @@ class RuleBasedClassifier(MovementClassifier):
                     normalized_asymmetry = leg_asymmetry / shoulder_width
                     if normalized_asymmetry > 0.6 and body_rotation > 0.03:
                         detected_type = MovementType.FLAG
-
-            # --- Drop knee: very bent knee (< 50°) + knee near or below hip level ---
-            if detected_type == MovementType.STATIC:
-                l_drop = (
-                    l_knee_angle < 50
-                    and l_knee["y"] >= l_hip["y"] - 0.03
-                    and l_knee_angle < r_knee_angle - 30
-                )
-                r_drop = (
-                    r_knee_angle < 50
-                    and r_knee["y"] >= r_hip["y"] - 0.03
-                    and r_knee_angle < l_knee_angle - 30
-                )
-                if l_drop or r_drop:
-                    detected_type = MovementType.DROP_KNEE
 
             if detected_type != MovementType.STATIC:
                 events.append(MovementEvent(
