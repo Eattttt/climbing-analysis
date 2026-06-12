@@ -157,6 +157,7 @@ class ProcessingPipeline:
             ctx.decoded.frame_paths,
             ctx.decoded.metadata.fps,
             sample_rate,
+            video_path=video_path,
         )
 
         ctx.movements = merge_movements(rule_movements, llm_movements)

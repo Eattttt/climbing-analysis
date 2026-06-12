@@ -1,13 +1,14 @@
 import base64
 import json
 import re
-from pathlib import Path
+import subprocess
+import tempfile
 
-import anthropic
+import httpx
 from app.config import settings
 from app.core.classification.movements import MovementEvent, MovementType, MOVEMENT_LABELS_CN
 
-VISION_SYSTEM_PROMPT = """你是一位专业的攀岩动作分析专家。你需要通过观察视频帧来识别攀岩者的技术动作。
+VISION_SYSTEM_PROMPT = """你是一位专业的攀岩动作分析专家。你需要通过观察视频来识别攀岩者的技术动作。
 
 你需要识别以下动作类型（用英文type返回）：
 - flag: 旗式 - 一脚伸出保持平衡，身体不对称
@@ -39,26 +40,104 @@ VISION_SYSTEM_PROMPT = """你是一位专业的攀岩动作分析专家。你需
 只返回JSON数组，不要其他文字。"""
 
 
-def _encode_frame(frame_path: str) -> dict:
-    with open(frame_path, "rb") as f:
-        data = base64.standard_b64encode(f.read()).decode("utf-8")
-    return {
-        "type": "image",
-        "source": {
-            "type": "base64",
-            "media_type": "image/jpeg",
-            "data": data,
-        },
-    }
+def _clip_video(video_path: str, max_seconds: int = 15) -> str:
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", prefix="clip_", delete=False)
+    tmp.close()
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", video_path,
+            "-t", str(max_seconds),
+            "-vf", "scale=480:-2",
+            "-r", "10",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-preset", "fast",
+            "-crf", "23",
+            "-an",
+            tmp.name,
+        ],
+        capture_output=True,
+        check=True,
+    )
+    return tmp.name
+
+
+def _encode_video_base64(video_path: str) -> str:
+    with open(video_path, "rb") as f:
+        return base64.standard_b64encode(f.read()).decode("utf-8")
 
 
 async def analyze_movements_with_vision(
     frame_paths: list[str],
     fps: float,
     sample_rate: int = 5,
+    video_path: str | None = None,
 ) -> list[MovementEvent]:
     if not settings.ANTHROPIC_API_KEY:
         return []
+
+    if video_path:
+        return await _analyze_with_video(video_path, fps)
+    else:
+        return await _analyze_with_frames(frame_paths, fps, sample_rate)
+
+
+async def _analyze_with_video(video_path: str, fps: float) -> list[MovementEvent]:
+    openai_base = settings.ANTHROPIC_BASE_URL.replace("/anthropic", "")
+    url = f"{openai_base}/v1/chat/completions"
+
+    clip_path = _clip_video(video_path, max_seconds=15)
+    try:
+        b64 = _encode_video_base64(clip_path)
+    finally:
+        import os
+        os.unlink(clip_path)
+
+    payload = {
+        "model": settings.CLAUDE_MODEL,
+        "max_tokens": 2000,
+        "messages": [
+            {"role": "system", "content": VISION_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "video_url",
+                        "video_url": {"url": f"data:video/mp4;base64,{b64}"},
+                    },
+                    {"type": "text", "text": "请分析这个攀岩视频，识别其中的技术动作。"},
+                ],
+            },
+        ],
+    }
+
+    headers = {
+        "Authorization": f"Bearer {settings.ANTHROPIC_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    except Exception as e:
+        print(f"LLM video analysis failed: {e}")
+        return []
+
+    if not text:
+        return []
+
+    return _parse_movements(text, fps)
+
+
+async def _analyze_with_frames(
+    frame_paths: list[str],
+    fps: float,
+    sample_rate: int,
+) -> list[MovementEvent]:
+    import anthropic
 
     client = anthropic.AsyncAnthropic(
         api_key=settings.ANTHROPIC_API_KEY,
@@ -76,13 +155,15 @@ async def analyze_movements_with_vision(
     content = []
     for i, path in enumerate(sampled_paths):
         timestamp = i * step * sample_rate / fps
-        content.append(_encode_frame(path))
+        with open(path, "rb") as f:
+            data = base64.standard_b64encode(f.read()).decode("utf-8")
+        content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": data},
+        })
         content.append({"type": "text", "text": f"帧 {i+1} (约 {timestamp:.1f}秒)"})
 
-    content.append({
-        "type": "text",
-        "text": "请分析以上攀岩视频帧序列，识别其中的攀岩技术动作。",
-    })
+    content.append({"type": "text", "text": "请分析以上攀岩视频帧序列，识别其中的攀岩技术动作。"})
 
     try:
         response = await client.messages.create(
@@ -98,19 +179,14 @@ async def analyze_movements_with_vision(
                 break
         if not text:
             return []
-        return _parse_movements(text, fps, sample_rate, step)
+        return _parse_movements(text, fps)
     except Exception as e:
         print(f"LLM vision analysis failed: {e}")
         return []
 
 
-def _parse_movements(
-    text: str,
-    fps: float,
-    sample_rate: int,
-    step: int,
-) -> list[MovementEvent]:
-    json_match = re.search(r'\[.*\]', text, re.DOTALL)
+def _parse_movements(text: str, fps: float) -> list[MovementEvent]:
+    json_match = re.search(r"\[.*\]", text, re.DOTALL)
     if not json_match:
         return []
 
@@ -128,7 +204,7 @@ def _parse_movements(
             continue
 
         time_approx = item.get("time_approx", 0)
-        frame_number = int(time_approx * fps / sample_rate) * sample_rate
+        frame_number = int(time_approx * fps)
         confidence = min(1.0, max(0.0, item.get("confidence", 0.5)))
 
         events.append(MovementEvent(
