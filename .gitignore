@@ -29,3 +29,4 @@ frontend/out/
 Thumbs.db
 _test_reply.txt
 *.tsbuildinfo
+deploy/*.exe
