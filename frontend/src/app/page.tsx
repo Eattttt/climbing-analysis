@@ -47,6 +47,18 @@ export default function HomePage() {
           上传攀岩视频，获取专业的技术分析和教练指导
         </p>
 
+        <input
+          ref={(el) => { if (el) (window as any).__videoInput = el; }}
+          type="file"
+          accept="video/mp4,video/quicktime,video/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleFile(f);
+          }}
+        />
+
         <div
           className={`border-2 border-dashed rounded-2xl p-16 text-center transition-colors cursor-pointer ${
             dragOver
@@ -66,14 +78,11 @@ export default function HomePage() {
             if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
           }}
           onClick={() => {
-            const input = document.createElement("input");
-            input.type = "file";
-            input.accept = "video/mp4,video/quicktime,video/*";
-            input.onchange = (e) => {
-              const target = e.target as HTMLInputElement;
-              if (target.files?.[0]) handleFile(target.files[0]);
-            };
-            input.click();
+            const input = (window as any).__videoInput as HTMLInputElement;
+            if (input) {
+              input.value = "";
+              input.click();
+            }
           }}
         >
           {file ? (
