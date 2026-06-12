@@ -52,7 +52,7 @@ export default function HomePage() {
           ref={(el) => { if (el) (window as any).__videoInput = el; }}
           type="file"
           accept="video/mp4,video/quicktime,video/*"
-          capture="environment"
+
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
