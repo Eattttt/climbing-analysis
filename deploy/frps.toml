@@ -1,0 +1,8 @@
+# FRP 服务端配置 - 放到服务器 47.253.86.69
+bindPort = 8889
+
+# 可选：管理面板
+webServer.addr = "0.0.0.0"
+webServer.port = 8890
+webServer.user = "admin"
+webServer.password = "climbing2026"

@@ -1,0 +1,10 @@
+# FRP 客户端配置 - 本地 PC 运行
+serverAddr = "47.253.86.69"
+serverPort = 8889
+
+[[proxies]]
+name = "climbing-web"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 3000
+remotePort = 8889
